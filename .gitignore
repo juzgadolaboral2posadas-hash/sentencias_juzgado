@@ -1,0 +1,6 @@
+credenciales.json
+.env
+__pycache__/
+venv/
+.DS_Store
+crear_usuario.py

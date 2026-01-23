@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    /* Ajuste de altura */
+    .full-height-card {
+        height: 80vh; 
+        display: flex;
+        flex-direction: column;
+    }
+    .editor-area {
+        flex: 1; 
+        resize: none;
+        font-family: 'Courier New', monospace;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        background-color: #212529; /* Dark match */
+        color: #f8f9fa;
+    }
+    .scrollable-result {
+        flex: 1;
+        overflow-y: auto;
+        position: relative; /* Para el overlay */
+    }
+    
+    /* Overlay para los spinners */
+    .overlay-spinner {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(33, 37, 41, 0.95); /* Fondo casi opaco */
+        z-index: 100;
+        display: none; /* Oculto por defecto */
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+
+    /* Estado Vacío (Robot) */
+    .empty-state {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: #6c757d;
+    }
+</style>
+
+<div class="container-fluid">
+    
+    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom border-secondary">
+        <div>
+            <h2 class="fw-bold mb-0 text-light"><i class="bi bi-clipboard-check me-2"></i>Control de Proyectos</h2>
+        </div>
+        <div>
+             <input type="file" id="fileInput" accept=".pdf,.docx,.odt,.txt" style="display: none;" onchange="procesarArchivo()">
+             
+             <button class="btn btn-outline-light me-2" onclick="document.getElementById('fileInput').click()">
+                 <i class="bi bi-upload me-2"></i>Subir Archivo
+             </button>
+             <button class="btn btn-primary px-4" onclick="analizarProyecto()">
+                 <i class="bi bi-stars me-2"></i>Ejecutar Auditoría
+             </button>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        
+        <div class="col-md-6">
+            <div class="card bg-dark border-secondary shadow-sm full-height-card position-relative">
+                <div class="card-header bg-transparent border-secondary d-flex justify-content-between py-2">
+                    <span class="text-light fw-bold">Documento / Borrador</span>
+                    <button class="btn btn-sm btn-link text-muted text-decoration-none" onclick="limpiarEditor()">
+                        <i class="bi bi-eraser me-1"></i>Limpiar
+                    </button>
+                </div>
+                
+                <div class="card-body p-0 position-relative d-flex flex-column">
+                    <div id="loader-archivo" class="overlay-spinner">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <span class="mt-2 text-light small">Leyendo documento...</span>
+                    </div>
+
+                    <textarea id="texto-borrador" class="form-control border-0 editor-area p-3" 
+                        placeholder="Pegue aquí el texto o suba un archivo PDF/Word..."></textarea>
+                </div>
+                
+                <div class="card-footer bg-transparent border-secondary text-end py-1">
+                    <small class="text-muted" id="contador-palabras">0 palabras</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card bg-dark border-secondary shadow-sm full-height-card position-relative">
+                <div class="card-header bg-transparent border-secondary py-2">
+                    <span class="text-light fw-bold">Informe de Auditoría</span>
+                </div>
+                
+                <div class="card-body p-3 scrollable-result" id="contenedor-resultados">
+                    
+                    <div id="loader-analisis" class="overlay-spinner">
+                        <div class="spinner-border text-success" style="width: 3rem; height: 3rem;" role="status"></div>
+                        <h5 class="mt-3 text-success fw-bold">Analizando Proyecto...</h5>
+                        <p class="text-muted small">Verificando reglas de estilo, citas y coherencia.</p>
+                    </div>
+
+                    <div id="placeholder-resultado" class="empty-state">
+                        <i class="bi bi-robot display-1 mb-3 opacity-50"></i>
+                        <p>El informe de la IA aparecerá aquí.</p>
+                    </div>
+
+                    <div id="contenido-informe" class="text-light" style="display: none;"></div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    const textarea = document.getElementById('texto-borrador');
+    const contador = document.getElementById('contador-palabras');
+    const placeholder = document.getElementById('placeholder-resultado');
+    const contenidoInforme = document.getElementById('contenido-informe');
+    const loaderArchivo = document.getElementById('loader-archivo');
+    const loaderAnalisis = document.getElementById('loader-analisis');
+
+    // Variable global para recordar el nombre real del archivo
+    let nombreArchivoActual = "";
+
+    // Contador
+    textarea.addEventListener('input', () => {
+        const t = textarea.value.trim();
+        contador.innerText = t ? `${t.split(/\s+/).length} palabras` : '0 palabras';
+    });
+
+    // Limpiar
+    function limpiarEditor() {
+        textarea.value = '';
+        document.getElementById('fileInput').value = '';
+        nombreArchivoActual = ""; // Reseteamos el nombre
+        textarea.dispatchEvent(new Event('input'));
+        
+        contenidoInforme.innerHTML = '';
+        contenidoInforme.style.display = 'none';
+        
+        placeholder.style.display = 'flex';
+        ocultarSpinners();
+    }
+
+    function ocultarSpinners() {
+        loaderArchivo.style.display = 'none';
+        loaderAnalisis.style.display = 'none';
+    }
+
+    // Subir Archivo
+    async function procesarArchivo() {
+        const fileInput = document.getElementById('fileInput');
+        if (!fileInput.files.length) return;
+
+        const archivo = fileInput.files[0];
+        // GUARDAMOS EL NOMBRE REAL
+        nombreArchivoActual = archivo.name;
+
+        const formData = new FormData();
+        formData.append('file', archivo);
+
+        loaderArchivo.style.display = 'flex';
+
+        try {
+            const res = await fetch('/extraer-texto-archivo/', { method: 'POST', body: formData });
+            const data = await res.json();
+            if (data.error) alert("Error: " + data.error);
+            else {
+                textarea.value = data.texto;
+                textarea.dispatchEvent(new Event('input'));
+            }
+        } catch (e) {
+            alert("Error al subir archivo.");
+        } finally {
+            ocultarSpinners();
+            fileInput.value = '';
+        }
+    }
+
+    // Ejecutar Auditoría
+    async function analizarProyecto() {
+        const texto = textarea.value;
+        if (!texto.trim()) {
+            alert("Por favor, ingrese el texto del proyecto primero.");
+            return;
+        }
+
+        // Determinamos el nombre final
+        let nombreParaGuardar = nombreArchivoActual;
+        if (!nombreParaGuardar) {
+            const ahora = new Date();
+            // Si pegó texto, nombre: "Texto 18:30"
+            nombreParaGuardar = "Texto " + ahora.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        // UI Reset
+        placeholder.style.display = 'none';      
+        contenidoInforme.style.display = 'none'; 
+        loaderAnalisis.style.display = 'flex';   
+
+        try {
+            const res = await fetch('/api/auditar', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    texto: texto,
+                    nombre_archivo: nombreParaGuardar // Enviamos el nombre real
+                })
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                alert("Error IA: " + data.error);
+                placeholder.style.display = 'flex';
+            } else {
+                placeholder.style.setProperty('display', 'none', 'important');
+                contenidoInforme.innerHTML = marked.parse(data.informe_ia);
+                contenidoInforme.style.display = 'block'; 
+                document.getElementById('contenedor-resultados').scrollTop = 0;
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Error de conexión con el servidor.");
+            placeholder.style.display = 'flex';
+        } finally {
+            loaderAnalisis.style.display = 'none';
+        }
+    }
+</script>
+{% endblock %}

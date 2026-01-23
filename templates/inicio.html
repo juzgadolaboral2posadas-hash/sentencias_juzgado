@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<div class="container-fluid pb-5"> <div class="d-flex justify-content-between align-items-end mb-4 border-bottom border-secondary pb-3">
+        <div>
+            <h2 class="fw-bold mb-0 text-light"><i class="bi bi-bank2 me-2"></i>SGP - Gestión de Precedentes</h2>
+            <small class="text-muted">Juzgado Laboral N.º 2 - Provincia de Misiones</small>
+        </div>
+        
+        <div class="d-flex flex-column align-items-end">
+            <div class="d-flex align-items-center mb-2">
+                <span class="badge bg-success bg-opacity-10 text-success border border-success me-3">
+                    <i class="bi bi-circle-fill me-1" style="font-size: 8px;"></i> IA EN LÍNEA
+                </span>
+                
+                <div class="d-flex align-items-center bg-dark px-3 py-1 rounded border border-secondary">
+                    <small class="text-muted me-2">Progreso Indexación:</small>
+                    <div class="progress me-2" style="width: 100px; height: 8px;">
+                        <div id="mini-barra" class="progress-bar bg-primary" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <small class="text-light fw-bold" id="txt-progreso">0%</small>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center">
+                <small class="text-muted me-3 fst-italic">
+                    <i class="bi bi-clock-history me-1"></i>Última actualización: <span id="fecha-actualizacion" class="text-light">Cargando...</span>
+                </small>
+                <button class="btn btn-sm btn-outline-primary" onclick="alert('Iniciando sincronización con Google Drive...')">
+                    <i class="bi bi-arrow-repeat me-1"></i>Sincronizar Ahora
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="card bg-dark text-light border-secondary h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <p class="text-muted text-uppercase fw-bold mb-1" style="font-size: 0.8rem;">Sentencias en Sistema</p>
+                        <h3 class="mb-0 fw-bold" id="total-docs">...</h3>
+                    </div>
+                    <i class="bi bi-database-check text-primary opacity-50 fs-2"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-dark text-light border-secondary h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <p class="text-muted text-uppercase fw-bold mb-1" style="font-size: 0.8rem;">Cola de Procesamiento</p>
+                        <h3 class="mb-0 fw-bold text-warning" id="pendientes-docs">...</h3>
+                    </div>
+                    <i class="bi bi-hourglass-split text-warning opacity-50 fs-2"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-dark text-light border-secondary h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <p class="text-muted text-uppercase fw-bold mb-1" style="font-size: 0.8rem;">Auditorías Ejecutadas</p>
+                        <h3 class="mb-0 fw-bold text-success">0</h3>
+                    </div>
+                    <i class="bi bi-shield-check text-success opacity-50 fs-2"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-6">
+            <div class="card h-100 bg-dark border-secondary">
+                <div class="card-header bg-transparent border-0 fw-bold text-light">
+                    <i class="bi bi-pie-chart-fill me-2 text-info"></i>Distribución por Materia
+                </div>
+                <div class="card-body">
+                    <canvas id="chartTipos" style="max-height: 250px;"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card h-100 bg-dark border-secondary">
+                <div class="card-header bg-transparent border-0 fw-bold text-light">
+                    <i class="bi bi-bar-chart-fill me-2 text-primary"></i>Sentencias Cargadas por Año
+                </div>
+                <div class="card-body">
+                    <canvas id="chartAnios" style="max-height: 250px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header bg-transparent border-0 fw-bold text-light">
+                    <i class="bi bi-layers-fill me-2 text-warning"></i>Evolución de Materias por Año (Análisis Cruzado)
+                </div>
+                <div class="card-body">
+                    <canvas id="chartCruzado" style="max-height: 350px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    Chart.defaults.color = '#adb5bd';
+    Chart.defaults.borderColor = '#495057';
+    Chart.defaults.font.size = 12;
+
+    // PALETA DE COLORES
+    const colores = {
+        'Laboral Ordinario art 76 cpl': '#0d6efd',       // Azul Francia
+        'Laboral Abreviado art 202 cpl': '#0dcaf0',      // Celeste Cyan
+        'Accidente Ordinario art 219 cpl': '#d63384',    // Rosa Fuerte
+        'Accidente Abreviado art 223 cpl': '#fd7e14',    // Naranja
+        'Amparo - Sumarísimo art 213 CPL': '#198754',    // Verde Inglés
+        'Apelación dictamen CCMM': '#6f42c1',            // Púrpura
+        'Ejecutivo Laboral': '#ffc107',                  // Amarillo
+        'Regulación Honorarios': '#adb5bd',              // Gris Claro
+        'Hon Extrajudiciales - (Sumarísimo)': '#6610f2', // Índigo 
+        'Tutela anticipada': '#dc3545',                  // Rojo (Alerta)
+        'Pago por consignación': '#20c997',              // Verde Agua
+        'Acción Autónoma de Nulidad': '#f8f9fa',         // Blanco
+        'Otros': '#6c757d'                               // Gris Medio
+    };
+
+    function getColor(tipo) {
+        return colores[tipo] || '#6c757d';
+    }
+
+    fetch('/estado-carga/')
+        .then(response => response.json())
+        .then(data => {
+            // Actualizar KPIs
+            document.getElementById('total-docs').innerText = data.Total_Sentencias;
+            document.getElementById('pendientes-docs').innerText = data.Pendientes;
+            document.getElementById('mini-barra').style.width = data.Progreso + "%";
+            document.getElementById('txt-progreso').innerText = data.Progreso + "%";
+            document.getElementById('fecha-actualizacion').innerText = data.Ultima_Actualizacion;
+
+            // 1. Gráfico Torta (Tipos) - Con LEYENDA
+            new Chart(document.getElementById('chartTipos'), {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(data.Stats_Tipos),
+                    datasets: [{
+                        data: Object.values(data.Stats_Tipos),
+                        backgroundColor: Object.keys(data.Stats_Tipos).map(tipo => getColor(tipo)),
+                        borderWidth: 1,
+                        borderColor: '#343a40'
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'right',
+                            labels: {
+                                boxWidth: 12,
+                                padding: 15,
+                                font: { size: 11 },
+                                color: '#e0e0e0'
+                            }
+                        }
+                    },
+                    layout: { padding: { right: 20 } }
+                }
+            });
+
+            // 2. Gráfico Barras (Años Simple) - AHORA AZUL
+            new Chart(document.getElementById('chartAnios'), {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(data.Stats_Anios),
+                    datasets: [{
+                        label: 'Total Sentencias',
+                        data: Object.values(data.Stats_Anios),
+                        backgroundColor: '#0d6efd', // <--- CAMBIO: Azul Institucional
+                        borderRadius: 3
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: '#495057' } }
+                    }
+                }
+            });
+
+            // 3. Gráfico Cruzado (Stacked)
+            const anios = Object.keys(data.Stats_Cruzadas).sort();
+            const todosLosTipos = Object.keys(data.Stats_Tipos);
+            
+            const datasetsCruzados = todosLosTipos.map(tipo => {
+                return {
+                    label: tipo,
+                    backgroundColor: getColor(tipo),
+                    data: anios.map(anio => data.Stats_Cruzadas[anio][tipo] || 0) 
+                };
+            });
+
+            new Chart(document.getElementById('chartCruzado'), {
+                type: 'bar',
+                data: {
+                    labels: anios,
+                    datasets: datasetsCruzados
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            position: 'bottom', 
+                            labels: { boxWidth: 10, color: '#adb5bd' } 
+                        },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    scales: {
+                        x: { stacked: true, grid: { display: false } },
+                        y: { stacked: true, grid: { color: '#495057' } }
+                    }
+                }
+            });
+        });
+</script>
+{% endblock %}

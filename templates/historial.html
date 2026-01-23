@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="text-light mb-0"><i class="bi bi-clock-history me-2"></i>Historial de Auditorías</h2>
+        
+        <div class="btn-group" role="group">
+            <span class="input-group-text bg-dark border-secondary text-light">Ordenar por:</span>
+            <a href="/historial?orden=fecha" class="btn btn-outline-secondary {{ 'active' if orden_actual == 'fecha' else '' }}">
+                <i class="bi bi-calendar-event me-1"></i> Fecha
+            </a>
+            <a href="/historial?orden=usuario" class="btn btn-outline-secondary {{ 'active' if orden_actual == 'usuario' else '' }}">
+                <i class="bi bi-person me-1"></i> Usuario
+            </a>
+        </div>
+    </div>
+
+    <div class="card bg-dark border-secondary shadow">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-dark table-hover mb-0 align-middle">
+                    <thead class="table-secondary">
+                        <tr>
+                            <th>Fecha y Hora</th>
+                            <th>Usuario</th>
+                            <th>Referencia / Archivo</th>
+                            <th class="text-end">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-historial">
+                        {% for aud in auditorias %}
+                        <tr id="fila-{{ aud.id }}">
+                            <td class="text-light">
+                                <span class="d-block fw-bold">{{ aud.fecha.strftime('%d/%m/%Y') }}</span>
+                                <small class="text-muted">{{ aud.fecha.strftime('%H:%M hs') }}</small>
+                            </td>
+                            
+                            <td>
+                                <span class="badge bg-primary bg-opacity-25 text-primary border border-primary border-opacity-25">
+                                    <i class="bi bi-person-fill me-1"></i>{{ aud.usuario or 'Sistema' }}
+                                </span>
+                            </td>
+                            
+                            <td>
+                                <span class="text-info fw-bold">{{ aud.nombre_archivo }}</span>
+                            </td>
+                            
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-primary me-2" onclick="verInforme({{ aud.id }})" title="Ver Informe">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                {% if user.rol == 'juez' %}
+                                <button class="btn btn-sm btn-outline-danger" onclick="eliminarAuditoria({{ aud.id }})" title="Eliminar">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% if not auditorias %}
+                <div class="p-5 text-center text-muted">
+                    <i class="bi bi-inbox display-1 opacity-25"></i>
+                    <p class="mt-3">No se encontraron registros de auditoría.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalInforme" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content bg-dark text-light border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">Detalle del Informe</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="contenido-modal" class="p-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    async function verInforme(id) {
+        const modal = new bootstrap.Modal(document.getElementById('modalInforme'));
+        document.getElementById('contenido-modal').innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary"></div></div>';
+        modal.show();
+        try {
+            const res = await fetch(`/api/auditoria/${id}`);
+            const data = await res.json();
+            document.getElementById('contenido-modal').innerHTML = marked.parse(data.informe);
+        } catch (error) { document.getElementById('contenido-modal').innerHTML = "Error."; }
+    }
+
+    async function eliminarAuditoria(id) {
+        if (!confirm("¿Eliminar registro permanentemente?")) return;
+        try {
+            const res = await fetch(`/api/auditoria/${id}`, { method: 'DELETE' });
+            if (res.ok) document.getElementById(`fila-${id}`).remove();
+            else alert("No tiene permiso para eliminar o hubo un error.");
+        } catch (error) { alert("Error de conexión."); }
+    }
+</script>
+{% endblock %}

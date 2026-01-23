@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4" style="max-width: 900px;">
+    
+    <div class="text-center mb-5">
+        <h2 class="fw-bold"><i class="bi bi-search me-2"></i>Consulta de precedentes</h2>
+        <p class="text-muted">Consulte la base de jurisprudencia del Juzgado Laboral N.º 2</p>
+    </div>
+
+    <div class="card bg-dark border-secondary shadow-lg mb-4">
+        <div class="card-body p-4">
+            <div class="input-group input-group-lg">
+                <input type="text" id="pregunta-input" class="form-control bg-black text-white border-secondary" 
+                    placeholder="Ej: ¿Cuál es jurisprudencia sobre despido por embarazo?" 
+                    onkeypress="if(event.keyCode==13) consultarRelator()">
+                <button class="btn btn-primary px-4" onclick="consultarRelator()" id="btn-buscar">
+                    <i class="bi bi-send-fill"></i>
+                </button>
+            </div>
+            <div class="form-text text-muted mt-2">
+                <i class="bi bi-lightbulb me-1"></i> El sistema buscará antecedentes y sintetizará la jurisprudencia relevante.
+            </div>
+        </div>
+    </div>
+
+    <div id="area-respuesta" class="d-none">
+        <div class="card bg-dark border-primary mb-4">
+            <div class="card-header border-primary bg-opacity-10 bg-primary text-primary fw-bold">
+                <i class="bi bi-stars me-2"></i>Respuesta del Relator
+            </div>
+            <div class="card-body text-light">
+                <div id="texto-respuesta" style="white-space: pre-wrap; word-wrap: break-word;"></div>
+            </div>
+        </div>
+
+        <div class="card bg-dark border-secondary">
+            <div class="card-header border-secondary text-muted">
+                <i class="bi bi-folder2-open me-2"></i>Expedientes Analizados
+            </div>
+            <ul class="list-group list-group-flush bg-dark" id="lista-fuentes">
+                </ul>
+        </div>
+    </div>
+
+    <div id="loading-relator" class="text-center mt-5 d-none">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Leyendo expedientes y redactando respuesta...</p>
+    </div>
+
+</div>
+
+<script>
+    async function consultarRelator() {
+        const input = document.getElementById('pregunta-input');
+        const btn = document.getElementById('btn-buscar');
+        const areaRespuesta = document.getElementById('area-respuesta');
+        const loading = document.getElementById('loading-relator');
+        
+        const pregunta = input.value;
+        if (!pregunta) return;
+
+        // UI Loading
+        areaRespuesta.classList.add('d-none');
+        loading.classList.remove('d-none');
+        input.disabled = true;
+        btn.disabled = true;
+
+        try {
+            const response = await fetch('/consultar-jurisprudencia/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pregunta: pregunta })
+            });
+            
+            const data = await response.json();
+
+            // Renderizar Respuesta (CON BLINDAJE ANTI-ERROR)
+            const respuestaTexto = data.respuesta || "La IA no devolvió texto. Intente reformular.";
+            
+            if (typeof marked !== 'undefined' && respuestaTexto) {
+                 document.getElementById('texto-respuesta').innerHTML = marked.parse(respuestaTexto);
+            } else {
+                 document.getElementById('texto-respuesta').innerText = respuestaTexto;
+            }
+            
+            const lista = document.getElementById('lista-fuentes');
+            lista.innerHTML = ''; // Limpiar
+            
+            if (data.casos_usados && data.casos_usados.length > 0) {
+                data.casos_usados.forEach(caso => {
+                    const li = document.createElement('li');
+                    li.className = "list-group-item bg-dark text-secondary border-secondary d-flex justify-content-between align-items-center";
+                    
+                    // LÓGICA DEL LINK:
+                    // Si trae link, ponemos botón rojo (<a>). Si no, icono gris (<i>).
+                    let iconoHtml = '';
+                    if (caso.link && caso.link !== '#' && caso.link !== 'None') {
+                        iconoHtml = `<a href="${caso.link}" target="_blank" class="text-danger me-2" title="Abrir PDF Original">
+                                        <i class="bi bi-file-earmark-pdf-fill fs-5"></i>
+                                     </a>`;
+                    } else {
+                        iconoHtml = `<i class="bi bi-file-earmark-pdf me-2 fs-5"></i>`;
+                    }
+
+                    // Renderizamos Carátula y Fecha
+                    li.innerHTML = `
+                        <div class="d-flex align-items-center">
+                            ${iconoHtml}
+                            <span class="text-light fw-bold">${caso.caratula}</span>
+                        </div>
+                        <span class="badge bg-secondary text-dark">${caso.fecha}</span>
+                    `;
+                    lista.appendChild(li);
+                });
+            } else {
+                lista.innerHTML = '<li class="list-group-item bg-dark text-muted">No se citaron expedientes específicos.</li>';
+            }
+
+            areaRespuesta.classList.remove('d-none');
+
+        } catch (error) {
+            alert("Error al consultar: " + error);
+        } finally {
+            loading.classList.add('d-none');
+            input.disabled = false;
+            btn.disabled = false;
+            input.focus();
+        }
+    }
+</script>
+{% endblock %}

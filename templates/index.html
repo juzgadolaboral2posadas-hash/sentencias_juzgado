@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-5">
+    
+    <div class="text-center mb-5">
+        <h1 class="display-4 text-light fw-bold">Bienvenido, {{ user.username }}</h1>
+        <p class="lead text-muted">Sistema de Gestión e Inteligencia Artificial del Juzgado Laboral N.º 2</p>
+    </div>
+
+    <div class="row g-4 justify-content-center">
+        
+        <div class="col-md-4">
+            <div class="card bg-dark border-secondary h-100 shadow-sm hover-card">
+                <div class="card-body text-center p-5">
+                    <i class="bi bi-search display-1 text-primary mb-4"></i>
+                    <h3 class="text-light">Buscador Semántico</h3>
+                    <p class="text-muted">Encuentre antecedentes buscando por conceptos, no solo por palabras exactas.</p>
+                    
+                    <form action="/buscar" method="get" class="mt-4">
+                        <div class="input-group">
+                            <input type="text" name="q" class="form-control bg-black text-light border-secondary" placeholder="Ej: despido por embarazo...">
+                            <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card bg-dark border-secondary h-100 shadow-sm position-relative hover-card">
+                <div class="card-body text-center p-5">
+                    <i class="bi bi-clipboard-check display-1 text-success mb-4"></i>
+                    <h3 class="text-light">Auditoría IA</h3>
+                    <p class="text-muted">Analice proyectos de sentencia, verifique citas y controle el estilo automáticamente.</p>
+                    <a href="/auditoria" class="btn btn-outline-success mt-3 stretched-link px-4">Nuevo Análisis</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card bg-dark border-secondary h-100 shadow-sm position-relative hover-card">
+                <div class="card-body text-center p-5">
+                    <i class="bi bi-clock-history display-1 text-info mb-4"></i>
+                    <h3 class="text-light">Historial</h3>
+                    <p class="text-muted">Revise auditorías pasadas y recupere informes generados anteriormente.</p>
+                    <a href="/historial" class="btn btn-outline-info mt-3 stretched-link px-4">Ver Registros</a>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+    /* Efecto suave al pasar el mouse */
+    .hover-card { transition: transform 0.2s; }
+    .hover-card:hover { transform: translateY(-5px); border-color: #6c757d !important; }
+</style>
+{% endblock %}

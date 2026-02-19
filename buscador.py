@@ -29,7 +29,7 @@ class BuscadorSemantico:
         try:
             # 1. Generar el embedding de la pregunta del usuario
             response = self.client.models.embed_content(
-                model="text-embedding-004",
+                model="models/text-embedding-004",
                 contents=consulta
             )
             

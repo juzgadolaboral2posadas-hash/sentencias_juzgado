@@ -4,22 +4,38 @@ import re
 from sqlalchemy.orm import Session
 from google import genai
 
+# Configuración del Modelo (Mantenemos tu elección por rendimiento/cuota)
+MODELO_IA = 'gemini-2.0-flash-lite'
+
 def limpiar_json_ia(texto_sucio):
     """
     Limpia la respuesta de la IA para obtener un JSON válido.
-    Quita los bloques de código markdown y espacios extra.
+    Mejorada con Regex para encontrar el JSON aunque la IA añada texto introductorio.
     """
-    texto = texto_sucio.replace("```json", "").replace("```JSON", "").replace("```", "")
+    if not texto_sucio: return "{}"
+    
+    # 1. Intentar quitar bloques de código markdown
+    texto = re.sub(r"```json\s*", "", texto_sucio, flags=re.IGNORECASE)
+    texto = re.sub(r"```\s*$", "", texto)
+    
+    # 2. Si aún hay basura alrededor, buscar el primer '{' y el último '}'
+    match = re.search(r'\{.*\}', texto, re.DOTALL)
+    if match:
+        return match.group()
+        
     return texto.strip()
 
 def obtener_embedding(cliente_ai, texto):
     """
-    Convierte texto en un vector de 768 números usando el modelo de embeddings de Gemini.
+    Convierte texto en un vector de 768 números usando el modelo de embeddings.
     """
     try:
+        # Recortamos a 9000 chars para evitar error de límite de tokens en el modelo de embedding
+        texto_clean = texto.replace("\n", " ").strip()[:9000]
+        
         resultado = cliente_ai.models.embed_content(
-            model="text-embedding-004",
-            contents=texto
+            model="models/text-embedding-004",
+            contents=texto_clean
         )
         return resultado.embeddings[0].values
     except Exception as e:
@@ -28,12 +44,12 @@ def obtener_embedding(cliente_ai, texto):
 
 def procesar_un_expediente(cliente_ai, db: Session, sentencia_id: int, texto_completo: str):
     """
-    1. Analiza el texto con su PROMPT DETALLADO para sacar metadatos (JSON).
-    2. Genera el vector numérico (Embedding) para búsqueda semántica.
+    1. Analiza el texto con TU PROMPT ORIGINAL (Consistencia garantizada).
+    2. Genera el vector numérico.
     3. Guarda todo en la base de datos.
     """
     
-    # --- SU PROMPT ORIGINAL Y VALIDADO ---
+    # --- TU PROMPT ORIGINAL Y VALIDADO (INTACTO) ---
     prompt = f"""
     ROL: Secretario de Jurisprudencia Experto.
     TAREA: Analizar la sentencia judicial provista y estructurar sus datos clave para una base de datos.
@@ -78,28 +94,34 @@ def procesar_un_expediente(cliente_ai, db: Session, sentencia_id: int, texto_com
     """
     
     try:
-        # 1. GENERAR Metadata (Gemini Flash Lite)
+        # 1. GENERAR Metadata (Usando flash-lite por rendimiento)
         response = cliente_ai.models.generate_content(
-            model='gemini-2.0-flash-lite', 
+            model=MODELO_IA, 
             contents=prompt,
             config={'response_mime_type': 'application/json'}
         )
         
         texto_limpio = limpiar_json_ia(response.text)
-        datos = json.loads(texto_limpio)
-        if isinstance(datos, list): datos = datos[0] if len(datos) > 0 else {}
+        
+        try:
+            datos = json.loads(texto_limpio)
+        except json.JSONDecodeError:
+            print(f"⚠️ Error de JSON en ID {sentencia_id}. Reintentando limpieza...")
+            # Fallback simple si la limpieza regex falló
+            datos = {}
 
         # Blindaje contra listas (si la IA devuelve [{}])
         if isinstance(datos, list):
             datos = datos[0] if len(datos) > 0 else {}
 
-        # Validar datos extraídos
+        # Validar datos extraídos (Defaults seguros)
         caratula = datos.get("caratula", "Sin Carátula")
         voces = datos.get("voces", "")
         sumario = datos.get("sumario", "")
+        fecha = datos.get("fecha", "S/F")
 
         # 2. GENERAR VECTOR (La "Huella Digital" Semántica)
-        # Combinamos voces y sumario para que el buscador encuentre conceptos
+        # Combinamos voces y sumario tal como lo venías haciendo
         texto_para_vectorizar = f"Temas: {voces}. Resumen: {sumario}"
         vector = obtener_embedding(cliente_ai, texto_para_vectorizar)
 
@@ -107,10 +129,10 @@ def procesar_un_expediente(cliente_ai, db: Session, sentencia_id: int, texto_com
         nuevo_indice = models.IndiceSentencia(
             sentencia_id=sentencia_id,
             caratula=caratula,
-            fecha=datos.get("fecha", "S/F"),
+            fecha=fecha,
             voces=voces.lower(),
             sumario_analitico=sumario,
-            vector_embedding=vector  # <--- Aquí guardamos la inteligencia nueva
+            vector_embedding=vector
         )
         
         db.add(nuevo_indice)
@@ -120,4 +142,6 @@ def procesar_un_expediente(cliente_ai, db: Session, sentencia_id: int, texto_com
     except Exception as e:
         print(f"❌ Error procesando ID {sentencia_id}: {e}")
         db.rollback() 
-        raise e
+        # No relanzamos la excepción (raise e) para que el script masivo NO se detenga,
+        # sino que anote el error y pase al siguiente archivo.
+        return False

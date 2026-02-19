@@ -57,7 +57,20 @@ def ejecutar_auditoria(cliente_ai, db, texto_borrador, nombre_archivo):
     
     ETAPA 2 – CALIDAD DE REDACCIÓN Y CITAS
     Analiza lenguaje, claridad y coherencia.
-    - Crea una TABLA DE ERRORES ORTOGRÁFICOS (Error | Corrección).
+    ANÁLISIS DEL TEXTO Y CALIDAD REDACCIONAL
+    Revisar el proyecto y formular recomendaciones de mejora, identificando:
+	    •	claridad expositiva
+	    •	coherencia interna
+	    •	orden lógico del razonamiento
+	    •	precisión terminológica
+	    •	posibles ambigüedades, reiteraciones o vacíos argumentales
+    Las sugerencias deben ser:
+	    •	técnicas
+	    •	descriptivas
+	    •	no decisorias
+	    •	sin alterar el sentido de la solución proyectada
+    - Revisa y controla la ortografía, gramática, sintaxis y semántica. Así como el correcto uso de los signos de puntuación. Si encuentras errores, cítalos textualmente y sugiere correcciones.
+    - Crea una TABLA DE ERRORES ORTOGRÁFICOS (Error | Corrección). Si un error se repite identificarlo solo una vez consignando "(reiterado)".
     - Revisa CITAS DOCTRINARIAS: Deben tener Autor, Título, Editorial, Año, página.
     - Revisa CITAS JURISPRUDENCIALES: Deben tener Tribunal, Carátula, Fecha, Publicación.
     - Si las citas son de Cámara de Apelaciones de Posadas (Alzada) o de STJ Misiones deben indicar la carátula, fecha de sentencia y Sala I o Sala II, en el caso de la Cámara. Las del STJ Misiones: carátula y fecha de la sentencia.
@@ -65,8 +78,9 @@ def ejecutar_auditoria(cliente_ai, db, texto_borrador, nombre_archivo):
     - IMPORTANTE: Si las citas están bien, NO digas nada. Solo reporta las citas mal formadas o sospechosas.
     *Si encuentras citas mal formadas, listarlas y sugerir corrección.*
     
-    ETAPA 3 – CONTROL DE COHERENCIA Y REGLAS
-    (Nota: Analiza la coherencia interna y el cumplimiento de las REGLAS DE ESTILO listadas arriba).
+    
+    ETAPA 3 – CONTROL DE COHERENCIA INTERNA Y REGLAS DE ESTILO
+    (Nota: Analiza la coherencia interna, claridad del texto y el cumplimiento de las REGLAS DE ESTILO listadas arriba).
     - REGLA DE SILENCIO: Si el texto cumple las reglas, escribe ÚNICAMENTE: "✅ Sin inconsistencias de estilo detectadas."
     - NO listes las reglas que se cumplieron. Solo lista las VIOLACIONES detectadas.
     - Aplica los Umbrales de Advertencia (Baja, Media, Alta) si detectas contradicciones lógicas o violaciones a las reglas del juzgado.
@@ -77,6 +91,7 @@ def ejecutar_auditoria(cliente_ai, db, texto_borrador, nombre_archivo):
     3. Fundamentos Jurídicos (Premisas explícitas e implícitas).
     4. Evaluación Argumental (Puntos fuertes y débiles, saltos lógicos).
     5. Análisis Probatorio (Cómo se valoró la prueba, sin verificar el expediente real).
+    6. La respuesta de los puntos 3., 4.,  5., debe ser fundamentada y no solo enunciada. Desarrolla los argumentos de tu respuesta y da una explicación profunda y razonada que se apegue al texto. No inventes premisas o argumentos que no esten en el texto
           
     SEMÁFORO DE CALIDAD
     * 🔴 **Errores Graves:** (Contradicciones, citas inventadas, fallas en la fundamentación, falta de resolución).
@@ -90,7 +105,7 @@ def ejecutar_auditoria(cliente_ai, db, texto_borrador, nombre_archivo):
     1. TÍTULO: Comienza DIRECTAMENTE con: "INFORME DE AUDITORÍA"
     2. PROHIBIDO presentarse (No digas "Soy el auditor", "Como IA...", etc).
     3. PROHIBIDO saludar ni despedirse.
-    4. Estructura visualmente en dos secciones: "ANÁLISIS DE ESTILO" y "COHERENCIA LÓGICA".
+    4. Estructura visualmente en dos secciones: "ANÁLISIS DE ESTILO Y REDACCIÓN" y "COHERENCIA LÓGICA".
     
     CLÁUSULA FINAL OBLIGATORIA:
     "El presente análisis se apoya exclusivamente en el contenido del proyecto. NO implica conformidad o validación de la solución ni del análisis probatorio. Análisis generado por IA."

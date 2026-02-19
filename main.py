@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 # --- IMPORTS DE BASE DE DATOS ---
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, desc
 from database import engine, get_db
 import models
@@ -137,29 +137,138 @@ def estado_actual(db: Session = Depends(get_db), user: models.Usuario = Depends(
         ultima = db.query(models.Sentencia).order_by(desc(models.Sentencia.fecha_creacion)).first()
         fecha_str = ultima.fecha_creacion.strftime("%d/%m/%Y %H:%M hs") if ultima else "Sin datos"
 
-        indices = db.query(models.IndiceSentencia).all()
+        indices = db.query(models.IndiceSentencia).options(joinedload(models.IndiceSentencia.sentencia)).all()
         conteo_anios = Counter()
         conteo_tipos = Counter()
+        conteo_resultados = Counter() # <--- NUEVO CONTADOR
         conteo_cruzado = {} 
         
+        # --- LÓGICA DE CLASIFICACIÓN FINAL (DEPURADA) ---
         for ind in indices:
-            texto_analisis = ((ind.caratula or "") + " " + (ind.voces or "") + " " + (ind.sumario_analitico or "")).lower()
-            
-            # --- TU LÓGICA DE TIPOS EXACTA ---
-            tipo = "Laboral Ordinario art 76 cpl" # Default
-            if "acción autónoma" in texto_analisis: tipo = "Acción Autónoma de Nulidad"
-            elif "consignación" in texto_analisis: tipo = "Pago por consignación"
-            elif "tutela" in texto_analisis: tipo = "Tutela anticipada"
-            elif "ejecutivo" in texto_analisis or "apremio" in texto_analisis: tipo = "Ejecutivo Laboral"
-            elif "comision medica" in texto_analisis or "ccmm" in texto_analisis: tipo = "Apelación dictamen CCMM"
-            elif "amparo" in texto_analisis: tipo = "Amparo - Sumarísimo art 213 CPL"
-            elif "honorarios" in texto_analisis and ("extrajudicial" in texto_analisis or "sumarisimo" in texto_analisis): tipo = "Hon Extrajudiciales - (Sumarísimo)"
-            elif "accidente" in texto_analisis or "enfermedad" in texto_analisis or "24.557" in texto_analisis:
-                tipo = "Accidente Abreviado art 223 cpl" if ("abreviado" in texto_analisis or "223" in texto_analisis) else "Accidente Ordinario art 219 cpl"
-            else:
-                tipo = "Laboral Abreviado art 202 cpl" if ("abreviado" in texto_analisis or "202" in texto_analisis) else "Laboral Ordinario art 76 cpl"
-            # ---------------------------------
+            # Normalizamos texto
+            texto = ((ind.caratula or "") + " " + (ind.voces or "") + " " + (ind.sumario_analitico or "")).lower()
+            # 2. TEXTO PARA RESULTADO (Usamos EL FINAL del Texto Original)
+            # Tomamos los últimos 3000 caracteres donde suele estar el "RESUELVO"
+            texto_fallo = ""
+            if ind.sentencia and ind.sentencia.texto_completo:
+                texto_fallo = ind.sentencia.texto_completo[-3000:].lower()
 
+            # --- LÓGICA DE TIPOS (TU VERSIÓN DEFINITIVA) ---   
+            # DEFAULT: Si no cae en nada específico, es Ordinario (Esto asegura que aparezcan)
+            tipo = "LABORAL ORDINARIO ART. 76" 
+
+            # --- NIVEL 1: PROCESOS ESPECÍFICOS ---
+
+            # 1. Recurso Comisión Médica
+            if "227" in texto or "comision medica" in texto or "ccmm" in texto:
+                tipo = "RECURSO CONTRA DICTAMEN CM ART 227"
+
+            # 2. Accidente Abreviado (Sin "Ley XIII" para evitar falsos positivos)
+            elif "223" in texto or "accion especial" in texto or "prestacion" in texto:
+                tipo = "ACCIDENTE ABREVIADO ART 223"
+
+            # 3. Laboral Abreviado (CONDICIÓN ESTRICTA: "Laboral" Y "Abreviado" o "202")
+            elif "202-" in texto or ("acciones laborales abreviada" in texto):
+                tipo = "LABORAL ABREVIADO ART. 202"
+
+            # 4. Tutela Anticipada (NUEVA CATEGORÍA INDEPENDIENTE)
+            elif "tutela anticipada" in texto:
+                tipo = "TUTELA ANTICIPADA"
+
+            # 5. Sumarísimo CPCC
+            elif "466" in texto:
+                tipo = "SUMARISIMO ART 466 DEL CPCCFYVF"
+
+            # --- NIVEL 2: GRUPOS TEMÁTICOS ---
+
+            # 6. Honorarios
+            elif "honorarios" in texto and ("extrajudicial" in texto or "regulacion" in texto or "sumarisimo" in texto):
+                tipo = "REGULACION HONORARIOS EXTRAJUDICIALES"
+
+            # 7. Amparos y Sindicales
+            elif "amparo" in texto or "218" in texto or "sindical" in texto or "declarativa" in texto:
+                tipo = "ACCION DECLARATIVA Y AMPARO ART. 218"
+
+            # 8. Sumarísimos Laborales
+            elif "sumarisimo" in texto or "214" in texto or "213" in texto:
+                tipo = "SUMARISIMO ART 214"
+
+            # --- NIVEL 3: ACCIDENTES ORDINARIOS ---
+            
+            # Si dice "accidente" o "219" y NO entró en el Abreviado (223) de arriba.
+            elif "accidente" in texto or "enfermedad" in texto or "219" in texto or "daños" in texto:
+                tipo = "ACCIDENTE ORDINARIO ART 219"
+
+            # --- VALIDACIÓN FINAL PARA ORDINARIOS ---
+            # Si el tipo sigue siendo el Default, pero tiene palabras de despido/cobro, confirmamos.
+            # (No hace falta cambiar nada porque ya es el default, pero sirve de control mental).
+            
+            # FIN LÓGICA
+            
+           # --- LÓGICA DE RESULTADOS (VERSIÓN PRECISIÓN QUIRÚRGICA) ---
+            resultado = "NO DETERMINADO"
+            texto_analisis = ""
+            
+            if ind.sentencia and ind.sentencia.texto_completo:
+                # 1. LIMPIEZA
+                texto_analisis = ind.sentencia.texto_completo[-4000:].lower().replace("\n", " ").replace("\r", " ")
+                texto_analisis = re.sub(r'\s+', ' ', texto_analisis)
+
+            if texto_analisis:
+                # A. PARCIALIDAD (Prioridad Absoluta)
+                # Detecta: "parcialmente", "prospera en parte", "procedencia parcial"
+                if "parcial" in texto_analisis or "prospera en parte" in texto_analisis:
+                    resultado = "ADMITE PARCIALMENTE"
+                
+                # (Eliminada la categoría Homologación por instrucción)
+
+                # B. ANÁLISIS DE FONDO
+                else:
+                    es_rechazo = False
+                    es_admision = False
+
+                    # LISTA DE OBJETOS: Usamos \b para que 'demanda' no coincida con 'demandada'
+                    # Esto es CRÍTICO para evitar errores con "la excepcion de la demandada"
+                    objetos = r'(demanda|accion|pretension|reclamo|recurso|regulacion)\b'
+
+                    # --- DETECCIÓN DE RECHAZO ---
+                    # Busca: "rechazar... [hasta 120 letras] ... demanda"
+                    patron_rechazo = rf'(rechaz\w+|desestim\w+|no hacer lugar).{{0,120}}{objetos}'
+                    
+                    if re.search(patron_rechazo, texto_analisis):
+                        es_rechazo = True
+                    
+                    if "absolver" in texto_analisis or "caducidad de instancia" in texto_analisis or "declarar perimida" in texto_analisis:
+                        es_rechazo = True
+
+                    # --- DETECCIÓN DE ADMISIÓN ---
+                    # 1. Hacer lugar (Evitando el "no")
+                    match_hl = re.search(rf'hac\w+\s+lugar.{{0,120}}{objetos}', texto_analisis)
+                    if match_hl:
+                        inicio = match_hl.start()
+                        # Miramos 10 caracteres atrás por seguridad
+                        if "no " not in texto_analisis[max(0, inicio-10):inicio]:
+                            es_admision = True
+                    
+                    # 2. Condenar (Fuerte indicador de éxito)
+                    if "condenar" in texto_analisis or "condenando" in texto_analisis:
+                        es_admision = True
+                        
+                    # 3. Admitir / Prosperar / Acoger
+                    patron_admision = rf'(admiti\w+|prospera\w+|acoge\w+).{{0,120}}{objetos}'
+                    if re.search(patron_admision, texto_analisis):
+                        es_admision = True
+
+                    # --- DEFINICIÓN FINAL ---
+                    if es_rechazo and es_admision:
+                        resultado = "ADMITE PARCIALMENTE"
+                    elif es_rechazo:
+                        resultado = "RECHAZA DEMANDA"
+                    elif es_admision:
+                        resultado = "HACE LUGAR"
+            # FIN LÓGICA RESULTADOS
+            
+            # Acumuladores    
             anio = "S/D"
             if ind.fecha:
                 match = re.search(r'\d{4}', ind.fecha)
@@ -167,6 +276,7 @@ def estado_actual(db: Session = Depends(get_db), user: models.Usuario = Depends(
             
             conteo_anios[anio] += 1
             conteo_tipos[tipo] += 1
+            conteo_resultados[resultado] += 1 # <--- SUMAR AL CONTADOR
             if anio not in conteo_cruzado: conteo_cruzado[anio] = Counter()
             conteo_cruzado[anio][tipo] += 1
 
@@ -177,6 +287,7 @@ def estado_actual(db: Session = Depends(get_db), user: models.Usuario = Depends(
             "Progreso": progreso, "Ultima_Actualizacion": fecha_str,
             "Stats_Anios": dict(sorted(conteo_anios.items())),
             "Stats_Tipos": dict(conteo_tipos.most_common()),
+            "Stats_Resultados": dict(conteo_resultados.most_common()), # <--- ENVIAR AL FRONT
             "Stats_Cruzadas": conteo_cruzado
         }
     except Exception as e:

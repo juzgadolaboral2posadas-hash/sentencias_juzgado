@@ -1,113 +1,68 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    
-    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-        <div>
-            <h2 class="fw-bold mb-0 text-light"><i class="bi bi-collection me-2"></i>Biblioteca de Reglas</h2>
-            <small class="text-muted">Configure los parámetros que el Auditor IA utilizará para corregir los proyectos.</small>
-        </div>
-        <div>
-            <span class="badge bg-danger bg-opacity-10 text-danger border border-danger me-2" id="count-prohibido">0 Prohibiciones</span>
-            <span class="badge bg-success bg-opacity-10 text-success border border-success" id="count-sugerencia">0 Sugerencias</span>
-        </div>
-    </div>
+<div class="container-fluid mt-4">
+    <h2><i class="bi bi-shield-lock"></i> Centro de Validación de Jurisprudencia</h2>
+    <p class="text-muted">Módulo de supervisión HITL (Human-in-the-Loop)</p>
 
-    <div class="row g-4">
-        
+    <div class="row">
         <div class="col-md-4">
-            <div class="card bg-dark border-secondary shadow-sm">
-                <div class="card-header bg-transparent border-secondary fw-bold text-light">
-                    <i class="bi bi-plus-circle me-2"></i>Nueva Regla
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark text-white">
+                    Sentencias Pendientes (Bandeja de Entrada)
                 </div>
-                <div class="card-body">
-                    <form action="/api/reglas" method="post">
-                        
-                        <div class="mb-3">
-                            <label class="form-label text-muted small">Tipo de Regla</label>
-                            <select class="form-select bg-dark text-light border-secondary" name="categoria" required>
-                                <option value="Prohibido">⛔ Prohibido (Estricto)</option>
-                                <option value="Obligatorio">⚠️ Obligatorio (Citas/Formatos)</option>
-                                <option value="Estilo">💡 Sugerencia de Estilo</option>
-                            </select>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label text-muted small">Regla o Frase</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary" name="regla" placeholder="Ej: No usar 'a quo'" required>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label text-muted small">Explicación / Corrección</label>
-                            <textarea class="form-control bg-dark text-light border-secondary" name="explicacion" rows="3" placeholder="Ej: Reemplazar por 'Juez de Grado'. Es un término arcaico." required></textarea>
-                        </div>
-
-                        <div class="d-grid">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-save me-2"></i>Guardar Regla
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-            
-            <div class="alert alert-info mt-3 bg-opacity-10 border-info text-info small">
-                <i class="bi bi-info-circle-fill me-2"></i>
-                Estas reglas alimentan al Agente Auditor. Cada vez que analice un proyecto, verificará esta lista.
+                <ul class="list-group list-group-flush" id="listaPendientes">
+                    <li class="list-group-item text-center text-muted">Cargando...</li>
+                </ul>
             </div>
         </div>
 
-        <div class="col-md-8">
-            <div class="card bg-dark border-secondary h-100">
-                <div class="card-header bg-transparent border-secondary fw-bold text-light d-flex justify-content-between">
-                    <span><i class="bi bi-list-check me-2"></i>Reglas Vigentes</span>
-                    <a href="/biblioteca" class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-arrow-clockwise"></i>
-                    </a>
+        <div class="col-md-8" id="panelValidacion" style="display: none;">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-primary text-white d-flex justify-content-between">
+                    <span id="tituloCaratula">Carátula del Expediente</span>
+                    <span class="badge bg-warning text-dark">ESTADO: PENDIENTE</span>
                 </div>
-                <div class="card-body p-0 table-responsive">
-                    <table class="table table-dark table-hover mb-0 align-middle">
-                        <thead class="table-secondary text-uppercase small">
-                            <tr>
-                                <th style="width: 15%">Tipo</th>
-                                <th style="width: 30%">Regla</th>
-                                <th style="width: 45%">Explicación</th>
-                                <th style="width: 10%" class="text-end">Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for regla in reglas %}
-                            <tr class="fila-regla" data-cat="{{ regla.categoria }}">
-                                <td>
-                                    {% if regla.categoria == 'Prohibido' %}
-                                        <span class="badge bg-danger">Prohibido</span>
-                                    {% elif regla.categoria == 'Obligatorio' %}
-                                        <span class="badge bg-warning text-dark">Obligatorio</span>
-                                    {% else %}
-                                        <span class="badge bg-info text-dark">Estilo</span>
-                                    {% endif %}
-                                </td>
-                                <td class="fw-bold text-light">{{ regla.regla }}</td>
-                                <td class="text-muted small">{{ regla.explicacion }}</td>
-                                <td class="text-end">
-                                    <form action="/api/borrar_regla/{{ regla.id }}" method="post" style="display:inline;" onsubmit="return confirm('¿Eliminar esta regla?');">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger border-0">
-                                            <i class="bi bi-trash"></i>
-                                        </button>
-                                    </form>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="4" class="text-center py-5 text-muted">
-                                    <i class="bi bi-inbox fs-1 opacity-50"></i>
-                                    <p class="mt-2">No hay reglas definidas.</p>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h5 class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Texto Original</h5>
+                            <p class="small text-muted">Solo lectura. Contiene datos personales reales.</p>
+                            <div class="p-3 border border-danger border-2 rounded bg-light" 
+                                 style="height: 400px; overflow-y: scroll; position: relative;" 
+                                 id="textoOriginal">
+                                <div style="position: absolute; top: 30%; left: 10%; opacity: 0.1; font-size: 3rem; transform: rotate(-30deg); pointer-events: none;">
+                                    DATOS SENSIBLES
+                                </div>
+                                <span id="contenidoOriginal"></span>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <h5 class="text-success"><i class="bi bi-check-circle-fill"></i> Texto Anonimizado (Borrador IA)</h5>
+                            <p class="small text-muted">Edite este texto si la IA omitió algún dato sensible.</p>
+                            <textarea class="form-control border-success border-2 shadow-sm" 
+                                      style="height: 400px; resize: none; font-family: monospace;" 
+                                      id="textoAnonimizado"></textarea>
+                        </div>
+                    </div>
+
+                    <hr class="mt-4">
+
+                    <div class="form-check mb-3 p-3 bg-light border rounded">
+                        <input class="form-check-input ms-1" type="checkbox" value="" id="checkResponsabilidad">
+                        <label class="form-check-label ms-2 fw-bold text-dark" for="checkResponsabilidad">
+                            Declaro bajo mi responsabilidad que he revisado el texto de la columna derecha y confirmo que NO contiene nombres propios, DNI, ni datos que permitan inferir la identidad de las partes protegidas.
+                        </label>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <button class="btn btn-danger" onclick="ejecutarBotonPanico()"><i class="bi bi-trash"></i> Rechazar / Borrado Lógico</button>
+                        <button class="btn btn-success fw-bold" id="btnAprobar" onclick="aprobarYVectorizar()" disabled>
+                            <i class="bi bi-cpu"></i> Aprobar, Generar Sumario e Indexar
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -115,23 +70,87 @@
 </div>
 
 <script>
-    // Script simple para actualizar los contadores visuales al cargar la página
-    document.addEventListener("DOMContentLoaded", function() {
-        const filas = document.querySelectorAll('.fila-regla');
-        let prohibidos = 0;
-        let sugerencias = 0;
+    let sentenciaActualId = null;
 
-        filas.forEach(fila => {
-            const cat = fila.getAttribute('data-cat');
-            if (cat === 'Prohibido') {
-                prohibidos++;
-            } else {
-                sugerencias++;
-            }
-        });
-
-        document.getElementById('count-prohibido').innerText = `${prohibidos} Prohibiciones`;
-        document.getElementById('count-sugerencia').innerText = `${sugerencias} Sugerencias`;
+    // 1. Activar botón solo si se acepta la responsabilidad
+    document.getElementById('checkResponsabilidad').addEventListener('change', function() {
+        document.getElementById('btnAprobar').disabled = !this.checked;
     });
+
+    // 2. Función para cargar una sentencia para revisar
+    async function revisarSentencia(id) {
+        // Mostramos loading
+        document.getElementById('panelValidacion').style.display = 'block';
+        document.getElementById('contenidoOriginal').innerText = "Cargando datos seguros...";
+        document.getElementById('textoAnonimizado').value = "Cargando procesamiento IA...";
+        
+        try {
+            // Llamamos al endpoint (con NO-CACHE gracias al backend)
+            const response = await fetch(`/biblioteca/validar/${id}`);
+            if(!response.ok) throw new Error("Error de permisos o red");
+            const data = await response.json();
+            
+            sentenciaActualId = id;
+            document.getElementById('contenidoOriginal').innerText = data.texto_original;
+            document.getElementById('textoAnonimizado').value = data.texto_anonimizado;
+            
+            // Reiniciamos el checkbox
+            document.getElementById('checkResponsabilidad').checked = false;
+            document.getElementById('btnAprobar').disabled = true;
+
+        } catch(e) {
+            alert("Error al recuperar el documento. Sesión caducada o sin permisos.");
+        }
+    }
+
+    // 3. Función para Aprobar e invocar a la IA
+    async function aprobarYVectorizar() {
+        if(!sentenciaActualId) return;
+        
+        const btn = document.getElementById('btnAprobar');
+        btn.innerHTML = "<span class='spinner-border spinner-border-sm'></span> Vectorizando (Toma unos segundos)...";
+        btn.disabled = true;
+
+        const textoEditado = document.getElementById('textoAnonimizado').value;
+
+        try {
+            const response = await fetch(`/biblioteca/validar/${sentenciaActualId}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ texto_editado: textoEditado })
+            });
+            
+            if(response.ok) {
+                alert("✅ Sentencia validada, sumariada e indexada en vectores exitosamente.");
+                location.reload(); // Recargamos para limpiar la pantalla
+            } else {
+                const err = await response.json();
+                alert("❌ Error: " + err.detail);
+            }
+        } catch(e) {
+            alert("Error crítico de comunicación con el servidor.");
+        } finally {
+            btn.innerHTML = "<i class='bi bi-cpu'></i> Aprobar, Generar Sumario e Indexar";
+            btn.disabled = false;
+        }
+    }
+
+    // 4. Botón de Pánico
+    async function ejecutarBotonPanico() {
+        if(!sentenciaActualId) return;
+        if(!confirm("⚠️ ¿Estás seguro? Esto quitará la sentencia del sistema y solo el superadmin podrá recuperarla.")) return;
+
+        try {
+            const response = await fetch(`/biblioteca/sentencia/${sentenciaActualId}`, { method: 'DELETE' });
+            if(response.ok) {
+                alert("Sentencia eliminada (Borrado lógico aplicado).");
+                location.reload();
+            } else {
+                alert("Error al intentar eliminar (Verifique si tiene rol de Juez).");
+            }
+        } catch(e) {
+            alert("Error de red.");
+        }
+    }
 </script>
 {% endblock %}

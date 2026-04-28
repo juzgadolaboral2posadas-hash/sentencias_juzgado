@@ -11,6 +11,8 @@ from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPExcep
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import Response # Para los headers de No-Cache
+from pydantic import BaseModel
 
 # --- IMPORTS DE BASE DE DATOS ---
 from sqlalchemy.orm import Session, joinedload
@@ -34,6 +36,7 @@ from odf.opendocument import load
 from buscador import buscador_semantico
 from agentes import auditor 
 from agentes import relator
+from agentes import buscador_publico
 
 # ==========================================
 # 1. CONFIGURACIÓN GLOBAL
@@ -125,23 +128,58 @@ async def home(request: Request, db: Session = Depends(get_db), user: models.Usu
         "request": request, "user": user,
         "stats": {"sentencias": cant_sentencias, "auditorias": cant_auditorias, "actualizacion": fecha}
     })
+    # 1. LA LÓGICA DE CUARENTENA VA AQUÍ ADENTRO (Donde 'db' sí existe)
+    from datetime import datetime, timedelta
+    fecha_limite = datetime.now() - timedelta(days=30)
+
+    # Calculamos cuántas sentencias viejas hay pendientes
+    en_cuarentena = db.query(models.Sentencia).filter(
+        models.Sentencia.estado == models.EstadoSentencia.PENDIENTE,
+        models.Sentencia.fecha_creacion < fecha_limite, # <-- USAMOS TU CAMPO ORIGINAL
+        models.Sentencia.dependencia_id == usuario_actual.dependencia_id
+    ).count()
+
+    # ... (aquí pueden estar tus otras estadísticas) ...
+
+    # 2. PASAMOS EL DATO A LA PLANTILLA
+    return templates.TemplateResponse("inicio.html", {
+        "request": request,
+        "user": usuario_actual,
+        "en_cuarentena": en_cuarentena # Inyectamos la variable para el HTML
+    })
+
+# LOCALIZACIÓN: main.py -> app.get("/estado-carga/")
+# Reemplazar la lógica de conteo por esta que respeta la multi-dependencia:
 
 @app.get("/estado-carga/")
-def estado_actual(db: Session = Depends(get_db), user: models.Usuario = Depends(login_required)):
-    """API para los gráficos con TU LÓGICA ORIGINAL"""
+async def estado_carga(db: Session = Depends(get_db), user: models.Usuario = Depends(get_current_user)):
     try:
-        total_sentencias = db.query(models.Sentencia).count()
-        total_procesadas = db.query(models.IndiceSentencia).count()
-        pendientes = max(0, total_sentencias - total_procesadas)
+        dep_id = user.dependencia_id
         
-        ultima = db.query(models.Sentencia).order_by(desc(models.Sentencia.fecha_creacion)).first()
+        # Consultas con comparación EXPLÍCITA (==) para evitar el error de DatatypeMismatch
+        total_sentencias = db.query(models.Sentencia).filter(models.Sentencia.dependencia_id == dep_id).count()
+        
+        indices = db.query(models.IndiceSentencia)\
+            .join(models.Sentencia)\
+            .filter(models.Sentencia.dependencia_id == dep_id)\
+            .options(joinedload(models.IndiceSentencia.sentencia))\
+            .all()
+
+        total_procesadas = len(indices)
+        pendientes = max(0, total_sentencias - total_procesadas)
+        progreso = round((total_procesadas / total_sentencias) * 100, 1) if total_sentencias > 0 else 0
+        
+        ultima = db.query(models.Sentencia)\
+            .filter(models.Sentencia.dependencia_id == dep_id)\
+            .order_by(desc(models.Sentencia.fecha_creacion)).first()
         fecha_str = ultima.fecha_creacion.strftime("%d/%m/%Y %H:%M hs") if ultima else "Sin datos"
 
-        indices = db.query(models.IndiceSentencia).options(joinedload(models.IndiceSentencia.sentencia)).all()
+        # ... (Tu lógica de contadores de años, tipos y resultados que ya tienes) ...
+        # Asegúrate de inicializar los Counter() vacíos antes del bucle
         conteo_anios = Counter()
         conteo_tipos = Counter()
-        conteo_resultados = Counter() # <--- NUEVO CONTADOR
-        conteo_cruzado = {} 
+        conteo_resultados = Counter()
+        conteo_cruzado = {}
         
         # --- LÓGICA DE CLASIFICACIÓN FINAL (DEPURADA) ---
         for ind in indices:
@@ -281,18 +319,42 @@ def estado_actual(db: Session = Depends(get_db), user: models.Usuario = Depends(
             conteo_cruzado[anio][tipo] += 1
 
         progreso = round((total_procesadas / total_sentencias) * 100, 1) if total_sentencias > 0 else 0
-
+        
+        # ... (dentro de app.get("/estado-carga/"))
+        
         return {
-            "Estado_IA": "EN LÍNEA", "Total_Sentencias": total_sentencias, "Pendientes": pendientes,
-            "Progreso": progreso, "Ultima_Actualizacion": fecha_str,
+            "Estado_IA": "EN LÍNEA",
+            "Total_Sentencias": total_sentencias,
+            "Pendientes": pendientes,
+            "Progreso": progreso,
+            "Ultima_Actualizacion": fecha_str,
             "Stats_Anios": dict(sorted(conteo_anios.items())),
             "Stats_Tipos": dict(conteo_tipos.most_common()),
-            "Stats_Resultados": dict(conteo_resultados.most_common()), # <--- ENVIAR AL FRONT
-            "Stats_Cruzadas": conteo_cruzado
+            "Stats_Resultados": dict(conteo_resultados.most_common()),
+            "Stats_Cruzadas": conteo_cruzado,
+            "dependencia_nombre": user.dependencia.nombre if user.dependencia else "Juzgado Laboral 2"
         }
     except Exception as e:
-        print(f"Error dashboard: {e}")
-        return {}
+        db.rollback() 
+        import traceback
+        print("-" * 50)
+        print(f"ERROR CRÍTICO EN DASHBOARD: {e}")
+        traceback.print_exc() # Esto te dirá la línea exacta en la terminal
+        print("-" * 50)
+        
+        # Devolvemos TODAS las llaves que inicio.html espera, aunque sea en 0
+        return {
+            "Total_Sentencias": 0, 
+            "Pendientes": 0, 
+            "Progreso": 0,
+            "Ultima_Actualizacion": f"Fallo: {str(e)[:30]}",
+            "Stats_Anios": {}, 
+            "Stats_Tipos": {}, 
+            "Stats_Resultados": {}, 
+            "Stats_Cruzadas": {}, # <--- ESTO FALTABA EN TU EXCEPT Y ROMPE EL JS
+            "Estado_IA": "ERROR",
+            "dependencia_nombre": "Error de Acceso"
+        }
 
 # ==========================================
 # 4. AUDITORIA Y CARGA DE ARCHIVOS
@@ -493,3 +555,230 @@ async def consultar_relator_endpoint(
         "respuesta": texto_resp,
         "casos_usados": lista_fallos  # CORRECCIÓN: Antes se llamaba 'referencias' y el HTML no lo leía
     }
+from pydantic import BaseModel
+
+class ConsultaPublica(BaseModel):
+    consulta: str
+    juzgado: str = "Todos"
+
+@app.post("/api/buscar-publico")
+def api_buscar_publico(datos: ConsultaPublica, db: Session = Depends(get_db)):
+    """
+    Ruta ABIERTA. No requiere Depends(get_current_user).
+    Alimentará la Landing Page con las tarjetas de resultados.
+    """
+    try:
+        # Instanciamos el cliente de Gemini de forma segura
+        import os
+        from google import genai
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="API Key no configurada")
+            
+        cliente_ai = genai.Client(api_key=api_key)
+        
+        resultado = buscador_publico.buscar_jurisprudencia_publica(
+            cliente_ai=cliente_ai, 
+            db=db, 
+            consulta=datos.consulta, 
+            juzgado_filtro=datos.juzgado
+        )
+        
+        if resultado["error"]:
+            raise HTTPException(status_code=503, detail=resultado["error"])
+            
+        return resultado["tarjetas"]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    # En la ruta de creación de usuarios (/api/usuarios/crear)
+
+class NuevoUsuarioDef(BaseModel):
+        username: str
+        password: str
+        rol: str
+        dependencia_id: int = None  # Nuevo campo necesario para la lógica que mencionas
+
+@app.post("/api/usuarios/crear")
+def api_crear_usuario(
+    datos: NuevoUsuarioDef, 
+    db: Session = Depends(get_db), 
+    admin_user: models.Usuario = Depends(get_current_user)
+    ):
+    # 1. Definir permisos
+    permisos = {
+        "superadmin": ["juez", "secretario_adm", "secretario"],
+        "juez": ["secretario_adm", "secretario"],
+        "secretario_adm": ["secretario"]
+    }
+    # ... validaciones de rol ...
+
+    if datos.rol not in permisos.get(admin_user.rol, []):
+        raise HTTPException(status_code=403, detail="Permisos insuficientes")
+
+    # 2. Definir la variable dependencia_destino (Soluciona el error de definición)
+    if admin_user.rol == "superadmin":
+        dependencia_destino = datos.dependencia_id
+    else:
+        dependencia_destino = admin_user.dependencia_id
+
+    # 3. Guardar (Aquí usamos admin_user.username para la auditoría)
+    clave_segura = pwd_context.hash(datos.password)
+    nuevo = models.Usuario(
+        username=datos.username,
+        hashed_password=clave_segura,
+        rol=datos.rol,
+        dependencia_id=dependencia_destino # Aquí ya está definida
+    )
+    db.add(nuevo)
+    
+    # Registro de auditoría usando admin_user (el que está logueado)
+    auditoria = models.Auditoria(
+        usuario=admin_user.username, 
+        nombre_archivo="SISTEMA_ADMIN",
+        resultado_analisis=f"Alta de {datos.username} en dep {dependencia_destino}"
+    )
+    db.add(auditoria)
+    db.commit()
+    return {"mensaje": "Cuenta institucional provisionada correctamente."}
+
+class ValidacionSentenciaRequest(BaseModel):
+        texto_editado: str # El humano envía el texto corregido aquí
+
+@app.post("/biblioteca/validar/{sentencia_id}")
+async def validar_y_vectorizar(
+    sentencia_id: int, 
+    payload: ValidacionSentenciaRequest,
+    db: Session = Depends(get_db), 
+    usuario_actual: models.Usuario = Depends(get_current_user)
+):
+    # 1. CONTROL DE ACCESO (Auditoría)
+    if usuario_actual.rol not in ["juez", "secretario", "secretario_adm"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado. Se requiere Nivel 1 o 2.")
+
+    # Buscamos la sentencia
+    sentencia = db.query(models.Sentencia).filter(models.Sentencia.id == sentencia_id).first()
+    if not sentencia:
+        raise HTTPException(status_code=404, detail="Sentencia no encontrada.")
+
+    # 2. IDEMPOTENCIA (Auditoría)
+    if sentencia.estado == models.EstadoSentencia.APROBADO:
+        raise HTTPException(status_code=400, detail="Esta sentencia ya fue aprobada y vectorizada.")
+
+    # 3. VALIDACIÓN DE DEPENDENCIA (Gobernanza)
+    if sentencia.dependencia_id != usuario_actual.dependencia_id:
+        raise HTTPException(status_code=403, detail="Violación de seguridad: No puedes validar fallos de otro juzgado.")
+
+    try:
+        # 4. TRAZABILIDAD DE EDICIÓN HUMANA (Tu requerimiento)
+        if payload.texto_editado != sentencia.texto_anonimizado:
+            # Si el humano modificó el texto, guardamos el registro forense
+            log_correccion = models.LogAnonimizacion(
+                sentencia_id=sentencia.id,
+                usuario_id=usuario_actual.id,
+                texto_ia_original=sentencia.texto_anonimizado,
+                texto_humano_corregido=payload.texto_editado
+            )
+            db.add(log_correccion)
+            # Actualizamos la sentencia con el texto limpio definitivo
+            sentencia.texto_anonimizado = payload.texto_editado
+
+        # 5. GENERACIÓN DE ÍNDICE Y VECTORES (IA sobre texto corregido)
+        # Aquí el bibliotecario/agente IA entra en acción usando el texto_editado
+        prompt = f"""
+        Analiza esta sentencia laboral estrictamente anonimizada:
+        {sentencia.texto_anonimizado[:15000]} 
+        
+        Genera un JSON con "voces", "sumario_analitico" (sin nombres propios) y "fecha".
+        """
+        
+        resp_ia = client.models.generate_content(
+            model="gemini-2.0-flash-lite", contents=prompt, config={'response_mime_type': 'application/json'}
+        )
+        data_ia = resp_ia.parsed
+
+        texto_vector = f"Temas: {data_ia.get('voces')}. Resumen: {data_ia.get('sumario_analitico')}"
+        resp_emb = client.models.embed_content(model="models/text-embedding-004", contents=texto_vector)
+        vector_nuevo = resp_emb.embeddings[0].values
+
+        # 6. GUARDADO FINAL Y CAMBIO DE ESTADO
+        nuevo_indice = models.IndiceSentencia(
+            sentencia_id=sentencia.id,
+            caratula=sentencia.caratula_real, # Protegido en Nivel 3
+            fecha=data_ia.get('fecha'),
+            voces=data_ia.get('voces'),
+            sumario_analitico=data_ia.get('sumario_analitico'),
+            vector_embedding=vector_nuevo
+        )
+        db.add(nuevo_indice)
+        
+        # Aprobamos y firmamos
+        sentencia.estado = models.EstadoSentencia.APROBADO
+        sentencia.usuario_validador_id = usuario_actual.id
+
+        # Auditoría General
+        log_admin = models.Auditoria(
+            usuario=usuario_actual.username,
+            accion="Validación y Vectorización",
+            detalle=f"Aprobó sentencia UUID: {sentencia.uuid_seguro}"
+        )
+        db.add(log_admin)
+
+        db.commit()
+        return {"status": "success", "message": "Sentencia aprobada, corregida e indexada exitosamente."}
+
+    except Exception as e:
+        # FAIL-SAFE: Si Gemini falla, hacemos rollback y queda en PENDIENTE
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error en procesamiento IA: {str(e)}")
+
+        # GET con prevención de caché (Exigencia del Auditor)
+@app.get("/biblioteca/validar/{sentencia_id}")
+async def obtener_texto_para_validar(
+    sentencia_id: int, 
+    response: Response, # Inyectamos Response para modificar headers
+    db: Session = Depends(get_db), 
+    usuario_actual: models.Usuario = Depends(get_current_user)
+):
+    if usuario_actual.rol not in ["juez", "secretario"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+        
+    sentencia = db.query(models.Sentencia).filter(models.Sentencia.id == sentencia_id).first()
+    
+    # POLÍTICA STRICT NO-CACHE (Previene exposición de Texto Original)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
+    return {
+        "texto_original": sentencia.texto_completo,
+        "texto_anonimizado": sentencia.texto_anonimizado
+    }
+
+# Botón de Pánico: Borrado Lógico
+@app.delete("/biblioteca/sentencia/{sentencia_id}")
+async def borrado_logico(
+    sentencia_id: int, 
+    db: Session = Depends(get_db), 
+    usuario_actual: models.Usuario = Depends(get_current_user)
+):
+    # Solo el juez puede borrar fallos
+    if usuario_actual.rol != "juez":
+        raise HTTPException(status_code=403, detail="Solo el Juez puede eliminar sentencias.")
+        
+    sentencia = db.query(models.Sentencia).filter(models.Sentencia.id == sentencia_id).first()
+    if sentencia:
+        # BORRADO LÓGICO
+        sentencia.estado = models.EstadoSentencia.ELIMINADO
+        
+        # Eliminamos el vector de la tabla de índices para que desaparezca de las búsquedas
+        db.query(models.IndiceSentencia).filter(models.IndiceSentencia.sentencia_id == sentencia_id).delete()
+        
+        log_borrado = models.Auditoria(
+            usuario=usuario_actual.username, accion="Borrado Lógico", detalle=f"Eliminó UUID {sentencia.uuid_seguro}"
+        )
+        db.add(log_borrado)
+        db.commit()
+        
+    return {"message": "Sentencia eliminada del índice público correctamente."}

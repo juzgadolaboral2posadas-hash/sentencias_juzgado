@@ -1,147 +1,68 @@
-import models
-import json
-import re
+import os
+import uuid
+import sys
 from sqlalchemy.orm import Session
-from google import genai
 
-# Configuración del Modelo (Mantenemos tu elección por rendimiento/cuota)
-MODELO_IA = 'gemini-2.0-flash-lite'
+# Importamos modelos y dependencias locales
+import models
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from anonimizador import anonimizador 
+from pdf_utils import extraer_texto_pdf
 
-def limpiar_json_ia(texto_sucio):
-    """
-    Limpia la respuesta de la IA para obtener un JSON válido.
-    Mejorada con Regex para encontrar el JSON aunque la IA añada texto introductorio.
-    """
-    if not texto_sucio: return "{}"
-    
-    # 1. Intentar quitar bloques de código markdown
-    texto = re.sub(r"```json\s*", "", texto_sucio, flags=re.IGNORECASE)
-    texto = re.sub(r"```\s*$", "", texto)
-    
-    # 2. Si aún hay basura alrededor, buscar el primer '{' y el último '}'
-    match = re.search(r'\{.*\}', texto, re.DOTALL)
-    if match:
-        return match.group()
-        
-    return texto.strip()
+class Bibliotecario:
+    def __init__(self):
+        # 💡 GRAN CAMBIO ARQUITECTÓNICO:
+        # Ya no instanciamos 'genai.Client' aquí. La generación del sumario 
+        # y la vectorización (3072 dimensiones) se delegaron a main.py 
+        # (endpoint de validación) para que ocurran solo POST-revisión humana.
+        pass
 
-def obtener_embedding(cliente_ai, texto):
-    """
-    Convierte texto en un vector de 768 números usando el modelo de embeddings.
-    """
-    try:
-        # Recortamos a 9000 chars para evitar error de límite de tokens en el modelo de embedding
-        texto_clean = texto.replace("\n", " ").strip()[:9000]
-        
-        resultado = cliente_ai.models.embed_content(
-            model="models/text-embedding-004",
-            contents=texto_clean
-        )
-        return resultado.embeddings[0].values
-    except Exception as e:
-        print(f"⚠️ Error generando embedding: {e}")
-        return None
+    def procesar_nueva_sentencia(self, db: Session, ruta_pdf: str, metadata_drive: dict, dependencia_destino: int):
+        """
+        Ingesta Fase 1: Extracción y NLP.
+        Prepara el documento como PENDIENTE para la revisión del Juez/Secretario.
+        """
+        id_drive_archivo = metadata_drive.get('id_drive')
 
-def procesar_un_expediente(cliente_ai, db: Session, sentencia_id: int, texto_completo: str):
-    """
-    1. Analiza el texto con TU PROMPT ORIGINAL (Consistencia garantizada).
-    2. Genera el vector numérico.
-    3. Guarda todo en la base de datos.
-    """
-    
-    # --- TU PROMPT ORIGINAL Y VALIDADO (INTACTO) ---
-    prompt = f"""
-    ROL: Secretario de Jurisprudencia Experto.
-    TAREA: Analizar la sentencia judicial provista y estructurar sus datos clave para una base de datos.
-    
-    TEXTO DE LA SENTENCIA:
-    {texto_completo[:90000]} 
-    
-    --- INSTRUCCIONES ESTRICTAS DE EXTRACCIÓN ---
-    
-    1. CARÁTULA REAL: 
-       - Debe incluir el NÚMERO DE EXPEDIENTE si figura en el texto.
-       - Formato deseado: "Expte N° [Numero] - [Actor] c/ [Demandado] s/ [Objeto]"
-       - Búscala al inicio (Vistos:...: o Causa:...) o en el encabezado.
-       - Extráela EXACTAMENTE como figura en el texto (Autos, Vistos o Encabezado).
-       - NO modifiques, abrevies ni anonimices nada en este campo.
-       
-    2. FECHA:
-       - Extrae la fecha de la sentencia (generalmente al inicio luego del lugar (Posadas,...). Formato DD-MM-YYYY (si es posible), en el texto surgirá el mes en letras.
-       
-    3. VOCES (TAGS):
-       - Lista de conceptos jurídicos tratados.
-       - OBLIGATORIO: Usar minúsculas.
-       - Separados por guiones.
-       - Ej: "accidente de trabajo - cálculo ibm - ley 27348 - inconstitucionalidad"
-       
-    4. SUMARIO ANALÍTICO (NO RESUMIR EN EXCESO):
-       - No quiero un tweet. Quiero un análisis detallado.
-       - En este resumen, EVITA usar los nombres propios.
-       - Usa ROLES PROCESALES para explicar los hechos: "El actor reclamó...", "La demandada contestó...", "El testigo afirmó...", "el perito....
-       - Para CADA tema/rubro tratado (ej: despido, horas extras, multa art 80), explica:
-         A) El planteo.
-         B) La SOLUCIÓN ADOPTADA por el Juez (se hizo lugar o se rechazó).
-         C) El fundamento central.
-       
-    SALIDA ESPERADA (Formato JSON puro):
-    {{
-        "caratula": "...",
-        "fecha": "...",
-        "voces": "...",
-        "sumario": "..."
-    }}
-    """
-    
-    try:
-        # 1. GENERAR Metadata (Usando flash-lite por rendimiento)
-        response = cliente_ai.models.generate_content(
-            model=MODELO_IA, 
-            contents=prompt,
-            config={'response_mime_type': 'application/json'}
-        )
-        
-        texto_limpio = limpiar_json_ia(response.text)
-        
+        # --- 1. IDEMPOTENCIA Y RACE CONDITIONS ---
+        existe = db.query(models.Sentencia).filter_by(id_drive=id_drive_archivo).first()
+        if existe:
+            print(f"⏭️ El archivo {id_drive_archivo} ya existe en BD. Omitiendo.")
+            return None
+
+        # --- 2. GOBERNANZA ESTRICTA ---
+        if not dependencia_destino:
+            raise ValueError("❌ Seguridad: Dependencia destino no especificada. Operación cancelada.")
+
+        print(f"📖 Bibliotecario: Preparando borrador para {metadata_drive.get('caratula_original', 'S/D')}")
+
+        # --- 3. EXTRACCIÓN Y ANONIMIZACIÓN LOCAL (Sin costo de API) ---
+        texto_crudo = extraer_texto_pdf(ruta_pdf)
+        texto_seguro = anonimizador.anonimizar_texto(texto_crudo)
+
         try:
-            datos = json.loads(texto_limpio)
-        except json.JSONDecodeError:
-            print(f"⚠️ Error de JSON en ID {sentencia_id}. Reintentando limpieza...")
-            # Fallback simple si la limpieza regex falló
-            datos = {}
+            # --- 4. GUARDADO SEGURO (NACE BLOQUEADA) ---
+            # Guardamos la sentencia exclusivamente con el estado PENDIENTE.
+            # No se crea la tabla IndiceSentencia, por lo que es invisible al buscador.
+            nueva_sentencia = models.Sentencia(
+                uuid_seguro=str(uuid.uuid4()),
+                id_drive=id_drive_archivo,
+                texto_completo=texto_crudo,      # Nivel 1/2
+                texto_anonimizado=texto_seguro,  # El humano lo editará luego
+                caratula_real=metadata_drive.get('caratula_original', 'Reservada'),
+                nro_expediente=metadata_drive.get('nro_expediente', 'S/D'),
+                dependencia_id=dependencia_destino,
+                estado=models.EstadoSentencia.PENDIENTE # <-- Cumplimiento HITL
+            )
+            
+            db.add(nueva_sentencia)
+            db.commit() 
+            
+            print("✅ Bibliotecario: Ingesta segura completada. Pendiente de validación humana.")
+            return nueva_sentencia.uuid_seguro
 
-        # Blindaje contra listas (si la IA devuelve [{}])
-        if isinstance(datos, list):
-            datos = datos[0] if len(datos) > 0 else {}
-
-        # Validar datos extraídos (Defaults seguros)
-        caratula = datos.get("caratula", "Sin Carátula")
-        voces = datos.get("voces", "")
-        sumario = datos.get("sumario", "")
-        fecha = datos.get("fecha", "S/F")
-
-        # 2. GENERAR VECTOR (La "Huella Digital" Semántica)
-        # Combinamos voces y sumario tal como lo venías haciendo
-        texto_para_vectorizar = f"Temas: {voces}. Resumen: {sumario}"
-        vector = obtener_embedding(cliente_ai, texto_para_vectorizar)
-
-        # 3. GUARDAR EN BASE DE DATOS
-        nuevo_indice = models.IndiceSentencia(
-            sentencia_id=sentencia_id,
-            caratula=caratula,
-            fecha=fecha,
-            voces=voces.lower(),
-            sumario_analitico=sumario,
-            vector_embedding=vector
-        )
-        
-        db.add(nuevo_indice)
-        db.commit()
-        return True
-
-    except Exception as e:
-        print(f"❌ Error procesando ID {sentencia_id}: {e}")
-        db.rollback() 
-        # No relanzamos la excepción (raise e) para que el script masivo NO se detenga,
-        # sino que anote el error y pase al siguiente archivo.
-        return False
+        except Exception as error_procesamiento:
+            # FAIL-SAFE: En caso de error de base de datos
+            db.rollback()
+            print(f"❌ Error en procesamiento de {id_drive_archivo}: {str(error_procesamiento)}")
+            return None
